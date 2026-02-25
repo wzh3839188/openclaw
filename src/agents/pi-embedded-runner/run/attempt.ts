@@ -76,6 +76,7 @@ import { buildSystemPromptParams } from "../../system-prompt-params.js";
 import { buildSystemPromptReport } from "../../system-prompt-report.js";
 import { sanitizeToolCallIdsForCloudCodeAssist } from "../../tool-call-id.js";
 import { resolveEffectiveToolFsWorkspaceOnly } from "../../tool-fs-policy.js";
+import { createUseSkillTool } from "../../tools/use-skill-tool.js";
 import { resolveTranscriptPolicy } from "../../transcript-policy.js";
 import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isRunnerAbortError } from "../abort.js";
@@ -381,7 +382,7 @@ export async function runEmbeddedAttempt(
     });
     // Check if the model supports native image input
     const modelHasVision = params.model.input?.includes("image") ?? false;
-    const toolsRaw = params.disableTools
+    let toolsRaw = params.disableTools
       ? []
       : createOpenClawCodingTools({
           agentId: sessionAgentId,
@@ -422,6 +423,25 @@ export async function runEmbeddedAttempt(
             params.requireExplicitMessageTarget ?? isSubagentSessionKey(params.sessionKey),
           disableMessageTool: params.disableMessageTool,
         });
+    // API-level skill tool: model can call use_skill("send-file") instead of scanning
+    // <available_skills> and calling read(SKILL.md path). Same list as in skillsPrompt.
+    const useSkillList = shouldLoadSkillEntries
+      ? skillEntries
+          .filter((e) => e.invocation?.disableModelInvocation !== true)
+          .map((e) => ({
+            name: e.skill.name,
+            description: e.skill.description ?? e.skill.name,
+            filePath: e.skill.filePath,
+          }))
+      : (params.skillsSnapshot?.resolvedSkills ?? []).map((s) => ({
+          name: s.name,
+          description: s.description ?? s.name,
+          filePath: s.filePath,
+        }));
+    const useSkillTool = createUseSkillTool({ skills: useSkillList });
+    if (useSkillTool && !params.disableTools) {
+      toolsRaw = [...toolsRaw, useSkillTool];
+    }
     const tools = sanitizeToolsForGoogle({ tools: toolsRaw, provider: params.provider });
     const allowedToolNames = collectAllowedToolNames({
       tools,

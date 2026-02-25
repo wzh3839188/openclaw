@@ -17,17 +17,31 @@ import { sanitizeForPromptLiteral } from "./sanitize-for-prompt.js";
 export type PromptMode = "full" | "minimal" | "none";
 type OwnerIdDisplay = "raw" | "hash";
 
-function buildSkillsSection(params: { skillsPrompt?: string; readToolName: string }) {
+/**
+ * Builds the "## Skills" block for the system prompt. When use_skill is available
+ * (API-level tool), we tell the model to call use_skill(skill_name); otherwise
+ * fall back to "read SKILL.md at <location> with read".
+ */
+function buildSkillsSection(params: {
+  skillsPrompt?: string;
+  readToolName: string;
+  availableTools?: Set<string>;
+}) {
   const trimmed = params.skillsPrompt?.trim();
   if (!trimmed) {
     return [];
   }
+  const useSkillAvailable = params.availableTools?.has("use_skill") ?? false;
+  const loadInstruction = useSkillAvailable
+    ? "If the user's request matches a skill: call use_skill(skill_name) with that skill's name to load its instructions, then follow them."
+    : `If exactly one skill clearly applies: read its SKILL.md at <location> with \`${params.readToolName}\`, then follow it.`;
   return [
     "## Skills (mandatory)",
     "Before replying: scan <available_skills> <description> entries.",
-    `- If exactly one skill clearly applies: read its SKILL.md at <location> with \`${params.readToolName}\`, then follow it.`,
-    "- If multiple could apply: choose the most specific one, then read/follow it.",
-    "- If none clearly apply: do not read any SKILL.md.",
+    `- ${loadInstruction}`,
+    "- If multiple could apply: choose the most specific one, then load/follow it.",
+    "- If the user's request matches or paraphrases a skill description (e.g. '发给我看看' vs '把文件发给我'), treat it as applying and load that skill.",
+    "- If none apply: do not load any SKILL.md.",
     "Constraints: never read more than one skill up front; only read after selecting.",
     trimmed,
     "",
@@ -389,6 +403,7 @@ export function buildAgentSystemPrompt(params: {
   const skillsSection = buildSkillsSection({
     skillsPrompt,
     readToolName,
+    availableTools,
   });
   const memorySection = buildMemorySection({
     isMinimal,
