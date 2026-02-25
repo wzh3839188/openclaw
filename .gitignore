@@ -20,6 +20,7 @@ ui/test-results/
 packages/dashboard-next/.next/
 packages/dashboard-next/out/
 log/
+logs/
 
 # Mise configuration files
 mise.toml
