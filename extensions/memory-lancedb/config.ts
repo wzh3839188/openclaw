@@ -2,17 +2,31 @@ import fs from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+export type EmbeddingConfigOpenAI = {
+  provider: "openai";
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+  dimension?: number;
+};
+
+export type EmbeddingConfigVolcengine = {
+  provider: "volcengine";
+  model: string;
+  apiKey: string;
+  dimension: number;
+  baseUrl?: string;
+};
+
 export type MemoryConfig = {
-  embedding: {
-    provider: "openai";
-    model?: string;
-    apiKey: string;
-  };
+  embedding: EmbeddingConfigOpenAI | EmbeddingConfigVolcengine;
   dbPath?: string;
   autoCapture?: boolean;
   autoRecall?: boolean;
   captureMaxChars?: number;
 };
+
+const VOLCENGINE_ARK_DEFAULT_BASE = "https://ark.cn-beijing.volces.com/api/v3";
 
 export const MEMORY_CATEGORIES = ["preference", "fact", "decision", "entity", "other"] as const;
 export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number];
@@ -53,6 +67,10 @@ const EMBEDDING_DIMENSIONS: Record<string, number> = {
   "text-embedding-3-large": 3072,
 };
 
+const DEFAULT_CUSTOM_DIMENSION = 1536;
+const MIN_DIMENSION = 256;
+const MAX_DIMENSION = 4096;
+
 function assertAllowedKeys(value: Record<string, unknown>, allowed: string[], label: string) {
   const unknown = Object.keys(value).filter((key) => !allowed.includes(key));
   if (unknown.length === 0) {
@@ -67,6 +85,26 @@ export function vectorDimsForModel(model: string): number {
     throw new Error(`Unsupported embedding model: ${model}`);
   }
   return dims;
+}
+
+/** Resolve vector dimension for LanceDB. */
+export function getEmbeddingVectorDim(cfg: MemoryConfig): number {
+  const e = cfg.embedding;
+  if (e.provider === "volcengine") {
+    const dim = e.dimension;
+    if (dim < MIN_DIMENSION || dim > MAX_DIMENSION) {
+      throw new Error(`embedding.dimension must be between ${MIN_DIMENSION} and ${MAX_DIMENSION}`);
+    }
+    return dim;
+  }
+  if (e.baseUrl) {
+    const dim = e.dimension ?? DEFAULT_CUSTOM_DIMENSION;
+    if (dim < MIN_DIMENSION || dim > MAX_DIMENSION) {
+      throw new Error(`embedding.dimension must be between ${MIN_DIMENSION} and ${MAX_DIMENSION}`);
+    }
+    return dim;
+  }
+  return vectorDimsForModel(e.model);
 }
 
 function resolveEnvVars(value: string): string {
@@ -101,9 +139,68 @@ export const memoryConfigSchema = {
     if (!embedding || typeof embedding.apiKey !== "string") {
       throw new Error("embedding.apiKey is required");
     }
-    assertAllowedKeys(embedding, ["apiKey", "model"], "embedding config");
+    const provider = (embedding.provider === "volcengine" ? "volcengine" : "openai") as
+      | "openai"
+      | "volcengine";
+    assertAllowedKeys(
+      embedding,
+      ["provider", "apiKey", "model", "baseUrl", "dimension"],
+      "embedding config",
+    );
 
-    const model = resolveEmbeddingModel(embedding);
+    if (provider === "volcengine") {
+      const model =
+        typeof embedding.model === "string" && embedding.model.trim()
+          ? embedding.model.trim()
+          : "doubao-embedding-vision-250615";
+      const dimension =
+        typeof embedding.dimension === "number" ? Math.floor(embedding.dimension) : undefined;
+      if (dimension === undefined || dimension < MIN_DIMENSION || dimension > MAX_DIMENSION) {
+        throw new Error(
+          `embedding.dimension is required for volcengine and must be between ${MIN_DIMENSION} and ${MAX_DIMENSION}`,
+        );
+      }
+      const baseUrl =
+        typeof embedding.baseUrl === "string" && embedding.baseUrl.trim()
+          ? resolveEnvVars(embedding.baseUrl.trim()).replace(/\/$/, "")
+          : VOLCENGINE_ARK_DEFAULT_BASE;
+
+      const captureMaxChars =
+        typeof cfg.captureMaxChars === "number" ? Math.floor(cfg.captureMaxChars) : undefined;
+      if (
+        typeof captureMaxChars === "number" &&
+        (captureMaxChars < 100 || captureMaxChars > 10_000)
+      ) {
+        throw new Error("captureMaxChars must be between 100 and 10000");
+      }
+
+      return {
+        embedding: {
+          provider: "volcengine",
+          model,
+          apiKey: resolveEnvVars(embedding.apiKey),
+          dimension,
+          baseUrl,
+        },
+        dbPath: typeof cfg.dbPath === "string" ? cfg.dbPath : DEFAULT_DB_PATH,
+        autoCapture: cfg.autoCapture === true,
+        autoRecall: cfg.autoRecall !== false,
+        captureMaxChars: captureMaxChars ?? DEFAULT_CAPTURE_MAX_CHARS,
+      };
+    }
+
+    const baseUrl =
+      typeof embedding.baseUrl === "string" && embedding.baseUrl.trim()
+        ? resolveEnvVars(embedding.baseUrl.trim())
+        : undefined;
+    const dimension =
+      typeof embedding.dimension === "number" ? Math.floor(embedding.dimension) : undefined;
+    if (dimension !== undefined && (dimension < MIN_DIMENSION || dimension > MAX_DIMENSION)) {
+      throw new Error(`embedding.dimension must be between ${MIN_DIMENSION} and ${MAX_DIMENSION}`);
+    }
+    const model = baseUrl
+      ? (typeof embedding.model === "string" ? embedding.model.trim() : null) || DEFAULT_MODEL
+      : resolveEmbeddingModel(embedding);
 
     const captureMaxChars =
       typeof cfg.captureMaxChars === "number" ? Math.floor(cfg.captureMaxChars) : undefined;
@@ -116,9 +213,10 @@ export const memoryConfigSchema = {
 
     return {
       embedding: {
-        provider: "openai",
+        provider: "openai" as const,
         model,
         apiKey: resolveEnvVars(embedding.apiKey),
+        ...(baseUrl ? { baseUrl, dimension: dimension ?? DEFAULT_CUSTOM_DIMENSION } : {}),
       },
       dbPath: typeof cfg.dbPath === "string" ? cfg.dbPath : DEFAULT_DB_PATH,
       autoCapture: cfg.autoCapture === true,
@@ -136,7 +234,22 @@ export const memoryConfigSchema = {
     "embedding.model": {
       label: "Embedding Model",
       placeholder: DEFAULT_MODEL,
-      help: "OpenAI embedding model to use",
+      help: "OpenAI embedding model, or custom model name when baseUrl is set",
+    },
+    "embedding.baseUrl": {
+      label: "Embedding API Base URL",
+      placeholder: "https://api.openai.com/v1",
+      help: "Optional. Use an OpenAI-compatible embedding endpoint (OpenRouter, vLLM, local).",
+    },
+    "embedding.dimension": {
+      label: "Embedding Dimension",
+      placeholder: String(DEFAULT_CUSTOM_DIMENSION),
+      help: "Vector dimension (required for volcengine; default 1536 for baseUrl)",
+    },
+    "embedding.provider": {
+      label: "Embedding Provider",
+      placeholder: "openai",
+      help: "openai (default) or volcengine for Volcano Engine Ark",
     },
     dbPath: {
       label: "Database Path",

@@ -2,8 +2,13 @@
   "id": "memory-lancedb",
   "kind": "memory",
   "uiHints": {
+    "embedding.provider": {
+      "label": "Embedding Provider",
+      "placeholder": "openai",
+      "help": "openai (default) or volcengine for Volcano Engine Ark"
+    },
     "embedding.apiKey": {
-      "label": "OpenAI API Key",
+      "label": "OpenAI / Ark API Key",
       "sensitive": true,
       "placeholder": "sk-proj-...",
       "help": "API key for OpenAI embeddings (or use ${OPENAI_API_KEY})"
@@ -11,7 +16,17 @@
     "embedding.model": {
       "label": "Embedding Model",
       "placeholder": "text-embedding-3-small",
-      "help": "OpenAI embedding model to use"
+      "help": "OpenAI or custom model name when baseUrl is set"
+    },
+    "embedding.baseUrl": {
+      "label": "Embedding API Base URL",
+      "placeholder": "https://api.openai.com/v1",
+      "help": "Optional. OpenAI-compatible endpoint (OpenRouter, vLLM, local)"
+    },
+    "embedding.dimension": {
+      "label": "Embedding Dimension",
+      "placeholder": "1536",
+      "help": "Vector dimension for custom model (default 1536)"
     },
     "dbPath": {
       "label": "Database Path",
@@ -41,12 +56,23 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "provider": {
+            "type": "string",
+            "enum": ["openai", "volcengine"]
+          },
           "apiKey": {
             "type": "string"
           },
           "model": {
-            "type": "string",
-            "enum": ["text-embedding-3-small", "text-embedding-3-large"]
+            "type": "string"
+          },
+          "baseUrl": {
+            "type": "string"
+          },
+          "dimension": {
+            "type": "number",
+            "minimum": 256,
+            "maximum": 4096
           }
         },
         "required": ["apiKey"]

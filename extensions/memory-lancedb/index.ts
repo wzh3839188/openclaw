@@ -13,10 +13,10 @@ import OpenAI from "openai";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import {
   DEFAULT_CAPTURE_MAX_CHARS,
+  getEmbeddingVectorDim,
   MEMORY_CATEGORIES,
   type MemoryCategory,
   memoryConfigSchema,
-  vectorDimsForModel,
 } from "./config.js";
 
 // ============================================================================
@@ -157,17 +157,21 @@ class MemoryDB {
 }
 
 // ============================================================================
-// OpenAI Embeddings
+// Embeddings (OpenAI or OpenAI-compatible endpoint)
 // ============================================================================
 
-class Embeddings {
+class OpenAIEmbeddings {
   private client: OpenAI;
 
   constructor(
     apiKey: string,
     private model: string,
+    baseUrl?: string,
   ) {
-    this.client = new OpenAI({ apiKey });
+    this.client = new OpenAI({
+      apiKey,
+      ...(baseUrl ? { baseURL: baseUrl } : {}),
+    });
   }
 
   async embed(text: string): Promise<number[]> {
@@ -176,6 +180,96 @@ class Embeddings {
       input: text,
     });
     return response.data[0].embedding;
+  }
+}
+
+// ============================================================================
+// Volcengine Ark Embeddings (native REST, not OpenAI protocol)
+// ============================================================================
+
+/** Try to extract a number[] from various Volcengine response shapes. */
+function extractEmbeddingFromVolcengineResponse(json: Record<string, unknown>): number[] | null {
+  // data[0].embedding or data[0].vector (OpenAI-like / text embedding API)
+  const data = json.data;
+  if (Array.isArray(data) && data.length > 0) {
+    const first = data[0];
+    if (first && typeof first === "object" && !Array.isArray(first)) {
+      const obj = first as Record<string, unknown>;
+      if (Array.isArray(obj.embedding) && obj.embedding.length > 0) {
+        return obj.embedding as number[];
+      }
+      if (Array.isArray(obj.vector) && obj.vector.length > 0) {
+        return obj.vector as number[];
+      }
+    }
+  }
+  // data.embedding (when data is a single object, not array)
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const d = data as Record<string, unknown>;
+    if (Array.isArray(d.embedding) && d.embedding.length > 0) {
+      return d.embedding as number[];
+    }
+  }
+  // embeddings[] (flat array of vectors)
+  if (Array.isArray(json.embeddings) && json.embeddings.length > 0) {
+    const first = json.embeddings[0];
+    if (Array.isArray(first) && first.length > 0) {
+      return first as number[];
+    }
+  }
+  // result.embedding or result.data[0].embedding (some Ark variants)
+  const result = json.result;
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    const r = result as Record<string, unknown>;
+    if (Array.isArray(r.embedding) && r.embedding.length > 0) {
+      return r.embedding as number[];
+    }
+    const rd = r.data;
+    if (Array.isArray(rd) && rd.length > 0) {
+      const first = rd[0] as Record<string, unknown> | undefined;
+      if (first?.embedding && Array.isArray(first.embedding)) {
+        return first.embedding as number[];
+      }
+    }
+  }
+  return null;
+}
+
+/** Volcengine Ark multimodal embedding API: POST /embeddings/multimodal with input: [{ type, text }]. */
+class VolcengineEmbeddings {
+  constructor(
+    private readonly apiKey: string,
+    private readonly model: string,
+    private readonly baseUrl: string,
+  ) {}
+
+  async embed(text: string): Promise<number[]> {
+    const url = `${this.baseUrl.replace(/\/$/, "")}/embeddings/multimodal`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: [{ type: "text", text }],
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Volcengine embedding failed: ${res.status} ${err}`);
+    }
+    const json = (await res.json()) as Record<string, unknown>;
+    const embedding = extractEmbeddingFromVolcengineResponse(json);
+    if (!Array.isArray(embedding) || embedding.length === 0) {
+      const keys =
+        typeof json === "object" && json !== null ? Object.keys(json).join(", ") : "non-object";
+      throw new Error(
+        `Volcengine embedding: unexpected response shape (top-level keys: ${keys}). Expected data[0].embedding or similar.`,
+      );
+    }
+    return embedding;
   }
 }
 
@@ -293,9 +387,16 @@ const memoryPlugin = {
   register(api: OpenClawPluginApi) {
     const cfg = memoryConfigSchema.parse(api.pluginConfig);
     const resolvedDbPath = api.resolvePath(cfg.dbPath!);
-    const vectorDim = vectorDimsForModel(cfg.embedding.model ?? "text-embedding-3-small");
+    const vectorDim = getEmbeddingVectorDim(cfg);
     const db = new MemoryDB(resolvedDbPath, vectorDim);
-    const embeddings = new Embeddings(cfg.embedding.apiKey, cfg.embedding.model!);
+    const embeddings =
+      cfg.embedding.provider === "volcengine"
+        ? new VolcengineEmbeddings(
+            cfg.embedding.apiKey,
+            cfg.embedding.model,
+            cfg.embedding.baseUrl ?? "https://ark.cn-beijing.volces.com/api/v3",
+          )
+        : new OpenAIEmbeddings(cfg.embedding.apiKey, cfg.embedding.model, cfg.embedding.baseUrl);
 
     api.logger.info(`memory-lancedb: plugin registered (db: ${resolvedDbPath}, lazy init)`);
 
