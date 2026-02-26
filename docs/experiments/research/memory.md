@@ -221,6 +221,10 @@ If you want a minimal, still-useful version:
 - Use SQLite FTS for recall with citations (path + line numbers).
 - Add embeddings only if recall quality or scale demands it.
 
+## Related
+
+- [Entity–State Memory](./entity-state-memory.md): entity-centric modeling (person, place, scene as entities) with **state over time** and optional **system-injected context** so key facts are injected at session/turn start instead of relying on the model to remember to read.
+
 ## References
 
 - Letta / MemGPT concepts: “core memory blocks” + “archival memory” + tool-driven self-editing memory.
