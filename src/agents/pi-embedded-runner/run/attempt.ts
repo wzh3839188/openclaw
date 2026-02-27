@@ -40,6 +40,7 @@ import {
 import { DEFAULT_CONTEXT_TOKENS } from "../../defaults.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
+import { buildHabitPrompt } from "../../habit/build-habit-prompt.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
 import { resolveDefaultModelForAgent } from "../../model-selection.js";
@@ -717,6 +718,16 @@ export async function runEmbeddedAttempt(
         settingsManager,
         resourceLoader,
       }));
+      if (params.config?.agents?.defaults?.habit?.enabled) {
+        const habitPrompt = await buildHabitPrompt({
+          prompt: params.prompt,
+          workspaceDir: effectiveWorkspace,
+          config: params.config,
+          model: params.model,
+          agentDir: params.agentDir,
+        });
+        systemPromptText = systemPromptText + (habitPrompt ? "\n\n" + habitPrompt : "");
+      }
       applySystemPromptOverrideToSession(session, systemPromptText);
       if (!session) {
         throw new Error("Embedded agent session missing");

@@ -231,6 +231,13 @@ export type AgentDefaultsConfig = {
      */
     includeReasoning?: boolean;
   };
+  /** User habit: intent+result memory and Habit Prompt injection (default: disabled). */
+  habit?: {
+    /** Enable habit module (intent recognition, match, Habit Prompt). Default: false. */
+    enabled?: boolean;
+    /** Path to habits YAML (relative to workspace or absolute). Default: USER_HABITS.yaml in workspace. */
+    filePath?: string;
+  };
   /** Max concurrent agent runs across all conversations. Default: 1 (sequential). */
   maxConcurrent?: number;
   /** Sub-agent defaults (spawned via sessions_spawn). */
