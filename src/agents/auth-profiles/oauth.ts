@@ -1,5 +1,4 @@
 import type { OAuthCredentials, OAuthProvider } from "@mariozechner/pi-ai";
-import { getOAuthApiKey, getOAuthProviders } from "@mariozechner/pi-ai/oauth";
 import { loadConfig, type OpenClawConfig } from "../../config/config.js";
 import { coerceSecretRef } from "../../config/types.secrets.js";
 import { withFileLock } from "../../infra/file-lock.js";
@@ -15,13 +14,39 @@ import { suggestOAuthProfileIdForLegacyDefault } from "./repair.js";
 import { ensureAuthProfileStore, saveAuthProfileStore } from "./store.js";
 import type { AuthProfileStore } from "./types.js";
 
-const OAUTH_PROVIDER_IDS = new Set<string>(getOAuthProviders().map((provider) => provider.id));
+/** Lazy-load pi-ai/oauth so plugin loader and tests don't fail when the subpath is missing. */
+let oauthModule: {
+  getOAuthApiKey: (
+    provider: OAuthProvider,
+    creds: OAuthCredentials | Record<string, OAuthCredentials>,
+  ) => Promise<{ apiKey: string; newCredentials: OAuthCredentials } | null>;
+  getOAuthProviders: () => Array<{ id: string }>;
+} | null = null;
 
-const isOAuthProvider = (provider: string): provider is OAuthProvider =>
-  OAUTH_PROVIDER_IDS.has(provider);
+async function loadOAuthModule(): Promise<typeof oauthModule> {
+  if (oauthModule) {
+    return oauthModule;
+  }
+  try {
+    oauthModule = (await import("@mariozechner/pi-ai/oauth")) as typeof oauthModule;
+    return oauthModule;
+  } catch {
+    throw new Error(
+      "@mariozechner/pi-ai/oauth is not available. Use a pi-ai version that exports the oauth subpath.",
+      { cause: err },
+    );
+  }
+}
 
-const resolveOAuthProvider = (provider: string): OAuthProvider | null =>
-  isOAuthProvider(provider) ? provider : null;
+async function getOAuthProviderIds(): Promise<Set<string>> {
+  const mod = await loadOAuthModule();
+  return new Set(mod.getOAuthProviders().map((p: { id: string }) => p.id));
+}
+
+async function resolveOAuthProvider(provider: string): Promise<OAuthProvider | null> {
+  const ids = await getOAuthProviderIds();
+  return ids.has(provider) ? provider : null;
+}
 
 /** Bearer-token auth modes that are interchangeable (oauth tokens and raw tokens). */
 const BEARER_AUTH_MODES = new Set(["oauth", "token"]);
@@ -190,11 +215,12 @@ async function refreshOAuthTokenWithLock(params: {
               return { apiKey: newCredentials.access, newCredentials };
             })()
           : await (async () => {
-              const oauthProvider = resolveOAuthProvider(cred.provider);
+              const oauthProvider = await resolveOAuthProvider(cred.provider);
               if (!oauthProvider) {
                 return null;
               }
-              return await getOAuthApiKey(oauthProvider, oauthCreds);
+              const mod = await loadOAuthModule();
+              return await mod.getOAuthApiKey(oauthProvider, oauthCreds);
             })();
     if (!result) {
       return null;

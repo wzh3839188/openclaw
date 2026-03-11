@@ -4,6 +4,15 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { captureEnv } from "../../test-utils/env.js";
 import { resolveApiKeyForProfile } from "./oauth.js";
+
+// Mock pi-ai/oauth so refresh path runs and throws (module may be missing in repo)
+vi.mock("@mariozechner/pi-ai/oauth", () => ({
+  getOAuthApiKey: vi.fn(async () => {
+    throw new Error("OAuth token refresh failed");
+  }),
+  getOAuthProviders: () => [{ id: "anthropic" }],
+  loginOpenAICodex: vi.fn(async () => null),
+}));
 import { ensureAuthProfileStore } from "./store.js";
 import type { AuthProfileStore } from "./types.js";
 
