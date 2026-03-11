@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import type * as LanceDB from "@lancedb/lancedb";
 import { Type } from "@sinclair/typebox";
 import OpenAI from "openai";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/memory-lancedb";
 import {
   DEFAULT_CAPTURE_MAX_CHARS,
   getEmbeddingVectorDim,
@@ -175,10 +175,14 @@ class OpenAIEmbeddings {
   }
 
   async embed(text: string): Promise<number[]> {
-    const response = await this.client.embeddings.create({
+    const params: { model: string; input: string; dimensions?: number } = {
       model: this.model,
       input: text,
-    });
+    };
+    if (this.dimensions) {
+      params.dimensions = this.dimensions;
+    }
+    const response = await this.client.embeddings.create(params);
     return response.data[0].embedding;
   }
 }
