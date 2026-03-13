@@ -28,18 +28,22 @@ async function loadOAuthModule(): Promise<typeof oauthModule> {
     return oauthModule;
   }
   try {
-    oauthModule = (await import("@mariozechner/pi-ai/oauth")) as typeof oauthModule;
+    const mod = await import("@mariozechner/pi-ai/oauth");
+    oauthModule = mod as unknown as typeof oauthModule;
     return oauthModule;
-  } catch {
+  } catch (e) {
     throw new Error(
       "@mariozechner/pi-ai/oauth is not available. Use a pi-ai version that exports the oauth subpath.",
-      { cause: err },
+      { cause: e },
     );
   }
 }
 
 async function getOAuthProviderIds(): Promise<Set<string>> {
   const mod = await loadOAuthModule();
+  if (!mod) {
+    throw new Error("@mariozechner/pi-ai/oauth not loaded");
+  }
   return new Set(mod.getOAuthProviders().map((p: { id: string }) => p.id));
 }
 
@@ -220,6 +224,9 @@ async function refreshOAuthTokenWithLock(params: {
                 return null;
               }
               const mod = await loadOAuthModule();
+              if (!mod) {
+                return null;
+              }
               return await mod.getOAuthApiKey(oauthProvider, oauthCreds);
             })();
     if (!result) {
