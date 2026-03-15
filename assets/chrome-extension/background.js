@@ -827,11 +827,10 @@ async function onDebuggerDetach(source, reason) {
     title: 'OpenClaw Browser Relay: re-attaching after navigation…',
   })
 
-  // Extend re-attach window from 2.5 s to ~7.7 s (5 attempts).
-  // SPAs and pages with heavy JS can take >2.5 s before the Chrome debugger
-  // is attachable, causing all three original attempts to fail and leaving
-  // the badge permanently off after every navigation.
-  const delays = [200, 500, 1000, 2000, 4000]
+  // Re-attach window: heavy SPAs (e.g. Douyin, TikTok) can take 15–25 s before
+  // the Chrome debugger is attachable. More attempts and longer delays reduce
+  // "attach lost" after navigation so the user does not have to click again.
+  const delays = [200, 500, 1000, 1500, 2500, 4000, 6000, 8000]
   for (let attempt = 0; attempt < delays.length; attempt++) {
     await new Promise((r) => setTimeout(r, delays[attempt]))
 

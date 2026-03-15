@@ -38,20 +38,22 @@ export function createProfileSelectionOps({
     let tabs1 = await listTabs();
     if (tabs1.length === 0) {
       if (capabilities.requiresAttachedTab) {
-        // Chrome extension relay can briefly drop its WebSocket connection (MV3 service worker
-        // lifecycle, relay restart). If we previously had a target selected, wait briefly for
-        // the extension to reconnect and re-announce its attached tabs before failing.
+        // Chrome extension relay can briefly drop (MV3 lifecycle, relay restart), or the
+        // extension may be re-attaching after navigation (retries up to ~24s for heavy SPAs).
+        // If we had a target before, wait for re-announce so one navigation doesn't lose attach.
         if (profileState.lastTargetId?.trim()) {
-          const deadlineAt = Date.now() + 3_000;
+          const waitMs = 26_000; // Slightly longer than extension re-attach window (~24s).
+          const deadlineAt = Date.now() + waitMs;
           while (tabs1.length === 0 && Date.now() < deadlineAt) {
-            await new Promise((resolve) => setTimeout(resolve, 200));
+            await new Promise((resolve) => setTimeout(resolve, 500));
             tabs1 = await listTabs();
           }
         }
         if (tabs1.length === 0) {
           throw new BrowserTabNotFoundError(
             `tab not found (no attached Chrome tabs for profile "${profile.name}"). ` +
-              "Click the OpenClaw Browser Relay toolbar icon on the tab you want to control (badge ON).",
+              "Click the OpenClaw Browser Relay toolbar icon on the tab you want to control (badge ON). " +
+              "If you just navigated that tab, the extension may still be re-attaching (up to ~24s); wait and retry, or re-click the icon.",
           );
         }
       } else {

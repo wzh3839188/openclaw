@@ -96,6 +96,10 @@ Configure the extension to use the derived relay port in the extension Options p
   - Badge shows `ON` when attached.
 - Click again to detach.
 
+After the agent navigates that tab (e.g. opens a link), the extension **automatically re-attaches** to the new page (retries for up to ~24 seconds for heavy SPAs). You usually do not need to click again. If the badge stays off after navigation, click the icon once on that tab to re-attach.
+
+**Fully automated (no attach step):** If you want the agent to drive a browser with zero manual attach (e.g. scraping many pages), use the built-in profile `openclaw` instead of `chrome`: `browser` with `profile="openclaw"`. That uses an OpenClaw-controlled browser instance; no extension or toolbar click required.
+
 ## Which tab does it control?
 
 - It does **not** automatically control “whatever tab you’re looking at”.
